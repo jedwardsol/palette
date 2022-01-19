@@ -86,7 +86,65 @@ RGBQUAD fromHSL(double H, double S, double L)
     return rgb;
 }
 
-void palette(double saturation, double lightness);
+RGBQUAD fromHSV(double H, double S, double V)
+{
+    assert( H>= 0 && H <= 1);
+    assert( S>= 0 && S <= 1);
+    assert( V>= 0 && V <= 1);
+
+    auto chroma = V * S;
+    auto Hprime = H*6;
+    auto m      = V - chroma;
+
+    auto X = chroma * (1 - std::abs (std::fmod(Hprime,2)  -1 ))  ;
+
+    RGBQUAD rgb{};
+
+    auto scale = [&](double d)
+    {
+        return static_cast<BYTE>(256*(d+m));
+    };
+
+    if(Hprime < 1)
+    {
+        rgb.rgbRed   = scale(chroma);
+        rgb.rgbGreen = scale(X); 
+        rgb.rgbBlue  = scale(0); 
+    }
+    else if(Hprime < 2)
+    {
+        rgb.rgbRed   = scale(X); 
+        rgb.rgbGreen = scale(chroma);
+        rgb.rgbBlue  = scale(0); 
+    }
+    else if(Hprime < 3)
+    {
+        rgb.rgbRed   = scale(0); 
+        rgb.rgbGreen = scale(chroma);
+        rgb.rgbBlue  = scale(X); 
+    }
+    else if(Hprime < 4)
+    {
+        rgb.rgbRed   = scale(0); 
+        rgb.rgbGreen = scale(X); 
+        rgb.rgbBlue  = scale(chroma);
+    }
+    else if(Hprime < 5)
+    {
+        rgb.rgbRed   = scale(X); 
+        rgb.rgbGreen = scale(0); 
+        rgb.rgbBlue  = scale(chroma);
+    }
+    else 
+    {
+        rgb.rgbRed   = scale(chroma);
+        rgb.rgbGreen = scale(0); 
+        rgb.rgbBlue  = scale(X);
+    }
+
+    return rgb;
+}
+
 
 
 auto makeHeader()
@@ -118,15 +176,6 @@ BITMAPINFO     *bitmapHeader        {makeHeader()};
 uint8_t         bitmapData[height][width]{};
 
 
-void palette(double saturation, double lightness)
-{
-    for(int i=0;i<256;i++)
-    {
-        bitmapHeader->bmiColors[i]= fromHSL(i/256.0,saturation,lightness);
-    }
-
-    PostMessage(theWindow,WM_REFRESH,0,0);
-}
 
 void paint(HWND h,WPARAM w, LPARAM l)
 {
@@ -194,7 +243,34 @@ LRESULT CALLBACK windowProc(HWND h, UINT m, WPARAM w, LPARAM l)
     return DefWindowProc(h,m,w,l);
 }
 
+void palette(double saturation, double other, auto converter)
+{
+    for(int i=0;i<256;i++)
+    {
+        bitmapHeader->bmiColors[i]= converter(i/256.0,saturation,other);
+    }
 
+    PostMessage(theWindow,WM_REFRESH,0,0);
+}
+
+
+void palette(HWND h)
+{
+    auto saturation = SendDlgItemMessage(h,IDC_SATURATION,TBM_GETPOS,0,0);
+    auto lightness  = SendDlgItemMessage(h,IDC_LIGHTNESS, TBM_GETPOS,0,0);
+
+    if(IsDlgButtonChecked(h,IDC_HSL))
+    {
+        SetDlgItemText(h,IDC_LORV,"Lightness");
+        palette(saturation/101.0, lightness/101.0,fromHSL);
+    }
+    else
+    {
+        SetDlgItemText(h,IDC_LORV,"Brightness");
+        palette(saturation/101.0, lightness/101.0,fromHSV);
+    }
+
+}
 
 INT_PTR dialogProc(HWND h, UINT m, WPARAM w, LPARAM l)
 {
@@ -208,13 +284,19 @@ INT_PTR dialogProc(HWND h, UINT m, WPARAM w, LPARAM l)
             PostQuitMessage(0);
             EndDialog(h,0);
             break;
+
+        case IDC_HSV:
+        case IDC_HSL:
+            palette(h);
         }
         break;
 
     case WM_INITDIALOG:
         ShowWindow(h,SW_SHOW);
+        CheckRadioButton(h,IDC_HSL, IDC_HSV,IDC_HSL);
         return false;
 
+    case WM_NOTIFY:
     case WM_SETCURSOR:
     case WM_NCHITTEST:
     case WM_MOUSEMOVE:
@@ -223,10 +305,7 @@ INT_PTR dialogProc(HWND h, UINT m, WPARAM w, LPARAM l)
 
     case WM_HSCROLL:
     {
-        auto saturation = SendDlgItemMessage(h,IDC_SATURATION,TBM_GETPOS,0,0);
-        auto lightness  = SendDlgItemMessage(h,IDC_LIGHTNESS, TBM_GETPOS,0,0);
-
-        palette(saturation/101.0, lightness/101.0);
+        palette(h);
         break;        
     }
 
