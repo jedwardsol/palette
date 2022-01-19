@@ -1,28 +1,28 @@
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
+#include "commctrl.h"
 
 #include <cassert>
-#include <thread>
-#include <chrono>
-using namespace std::literals;
 #include <cmath>
 #include <system_error>
 
-
+#include "print.h"
 #include "window.h"
-
+#include "resource.h"
 
 namespace
 {
 
 HWND                theWindow   {};
+HWND                theDialog   {};
+
 constexpr int       WM_REFRESH  {WM_APP};
 constexpr auto      windowStyle { WS_OVERLAPPED | WS_CAPTION  |  WS_SYSMENU  | WS_MINIMIZEBOX | WS_VISIBLE    };
 
 std::atomic_bool    done{false};
 
-constexpr int       bandWidth{8};
+constexpr int       bandWidth{6};
 constexpr int       height{100};
 constexpr int       width{256*bandWidth};
 
@@ -41,54 +41,61 @@ RGBQUAD fromHSL(double H, double S, double L)
 
     RGBQUAD rgb{};
 
+    auto scale = [&](double d)
+    {
+        return static_cast<BYTE>(256*(d+m));
+    };
+
     if(Hprime < 1)
     {
-        rgb.rgbRed   = 256*(chroma + m);
-        rgb.rgbGreen = 256*(X + m); 
-        rgb.rgbBlue  = 256*m; 
+        rgb.rgbRed   = scale(chroma);
+        rgb.rgbGreen = scale(X); 
+        rgb.rgbBlue  = scale(0); 
     }
     else if(Hprime < 2)
     {
-        rgb.rgbRed   = 256*(X + m); 
-        rgb.rgbGreen = 256*(chroma + m);
-        rgb.rgbBlue  = 256*m; 
+        rgb.rgbRed   = scale(X); 
+        rgb.rgbGreen = scale(chroma);
+        rgb.rgbBlue  = scale(0); 
     }
     else if(Hprime < 3)
     {
-        rgb.rgbRed   = 256*m; 
-        rgb.rgbGreen = 256*(chroma + m);
-        rgb.rgbBlue  = 256*(X + m); 
+        rgb.rgbRed   = scale(0); 
+        rgb.rgbGreen = scale(chroma);
+        rgb.rgbBlue  = scale(X); 
     }
     else if(Hprime < 4)
     {
-        rgb.rgbRed   = 256*m; 
-        rgb.rgbGreen = 256*(X + m); 
-        rgb.rgbBlue  = 256*(chroma + m);
+        rgb.rgbRed   = scale(0); 
+        rgb.rgbGreen = scale(X); 
+        rgb.rgbBlue  = scale(chroma);
     }
     else if(Hprime < 5)
     {
-        rgb.rgbRed   = 256*(X + m); 
-        rgb.rgbGreen = 256*m; 
-        rgb.rgbBlue  = 256*(chroma + m);
+        rgb.rgbRed   = scale(X); 
+        rgb.rgbGreen = scale(0); 
+        rgb.rgbBlue  = scale(chroma);
     }
     else 
     {
-        rgb.rgbRed   = 256*(chroma + m);
-        rgb.rgbGreen = 256*m; 
-        rgb.rgbBlue  = 256*(X + m);
+        rgb.rgbRed   = scale(chroma);
+        rgb.rgbGreen = scale(0); 
+        rgb.rgbBlue  = scale(X);
     }
-    
-
-
 
     return rgb;
 }
 
+void palette(double saturation, double lightness);
 
 
 auto makeHeader()
 {
-    auto header = reinterpret_cast<BITMAPINFO*>( new  std::byte[ sizeof(BITMAPINFO) + 255 * sizeof(RGBQUAD)]);
+    auto const size = sizeof(BITMAPINFO) + 255 * sizeof(RGBQUAD);
+
+    auto header = reinterpret_cast<BITMAPINFO*>( new  std::byte[size]);
+
+    memset(header,0,size);
 
     header->bmiHeader.biSize            = sizeof(BITMAPINFOHEADER);
     header->bmiHeader.biWidth           =  width;
@@ -102,11 +109,6 @@ auto makeHeader()
     header->bmiHeader.biClrUsed         = 0;
     header->bmiHeader.biClrImportant    = 0;
 
-    for(int i=0;i<256;i++)
-    {
-        header->bmiColors[i]= fromHSL(i/256.0,0.5,0.6);
-    }
-
     return header;
 }
 
@@ -116,19 +118,15 @@ BITMAPINFO     *bitmapHeader        {makeHeader()};
 uint8_t         bitmapData[height][width]{};
 
 
-
-
-
-void drawThread()
+void palette(double saturation, double lightness)
 {
-    while(!done)
+    for(int i=0;i<256;i++)
     {
-        PostMessage(theWindow,WM_REFRESH,0,0);
-        std::this_thread::sleep_for(10ms);
+        bitmapHeader->bmiColors[i]= fromHSL(i/256.0,saturation,lightness);
     }
+
+    PostMessage(theWindow,WM_REFRESH,0,0);
 }
-
-
 
 void paint(HWND h,WPARAM w, LPARAM l)
 {
@@ -153,7 +151,7 @@ void paint(HWND h,WPARAM w, LPARAM l)
     EndPaint(h,&paint);
 }
 
-LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l)
+LRESULT CALLBACK windowProc(HWND h, UINT m, WPARAM w, LPARAM l)
 {
     switch(m)
     {
@@ -197,6 +195,51 @@ LRESULT CALLBACK proc(HWND h, UINT m, WPARAM w, LPARAM l)
 }
 
 
+
+INT_PTR dialogProc(HWND h, UINT m, WPARAM w, LPARAM l)
+{
+    switch(m)
+    {
+    case WM_COMMAND:
+
+        switch(LOWORD(w))
+        {
+        case IDCANCEL:
+            PostQuitMessage(0);
+            EndDialog(h,0);
+            break;
+        }
+        break;
+
+    case WM_INITDIALOG:
+        ShowWindow(h,SW_SHOW);
+        return false;
+
+    case WM_SETCURSOR:
+    case WM_NCHITTEST:
+    case WM_MOUSEMOVE:
+    case WM_CTLCOLORSTATIC:
+        break;
+
+    case WM_HSCROLL:
+    {
+        auto saturation = SendDlgItemMessage(h,IDC_SATURATION,TBM_GETPOS,0,0);
+        auto lightness  = SendDlgItemMessage(h,IDC_LIGHTNESS, TBM_GETPOS,0,0);
+
+        palette(saturation/101.0, lightness/101.0);
+        break;        
+    }
+
+
+
+    default:
+        print("msg {:#x}\n",m);
+        break;
+    }
+
+    return 0;
+}
+
 }
 
 void createWindow()
@@ -204,7 +247,7 @@ void createWindow()
     WNDCLASSA    Class
     {
         CS_OWNDC,
-        proc,
+        windowProc,
         0,
         0,
         GetModuleHandle(nullptr),
@@ -234,10 +277,13 @@ void createWindow()
     {
         throw std::system_error{ static_cast<int>(GetLastError()), std::system_category(), "RegisterClass"};
     }
-
-    std::thread{drawThread}.detach();
 }
 
+
+void createDialog()
+{
+    theDialog=CreateDialog(nullptr,MAKEINTRESOURCE(IDD_DIALOG),nullptr,dialogProc);
+}
 
 
 void windowMessageLoop()
@@ -245,7 +291,10 @@ void windowMessageLoop()
     MSG     msg;
     while(GetMessage(&msg,0,0,0) > 0)
     {
-        DispatchMessage(&msg);
+        if(!IsDialogMessage(theDialog, &msg))
+        {
+            DispatchMessage(&msg);
+        }
     }
 }
 
@@ -262,5 +311,6 @@ int main()
     }
 
     createWindow();
+    createDialog();
     windowMessageLoop();
 }
